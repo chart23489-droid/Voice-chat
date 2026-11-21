@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>보이스챗</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#10171c;--rail:#0b1115;--panel:#162027;--line:#243038;--text:#e6edf0;--dim:#8a9ba4;--acc:#ff6f61;--ok:#4fd1a5}
+*{box-sizing:border-box;margin:0}
+html,body{height:100%}
+body{font:15px/1.5 "IBM Plex Sans KR",system-ui,sans-serif;background:var(--bg);color:var(--text);display:flex;overflow:hidden}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+input{font:inherit;color:var(--text);background:var(--rail);border:1px solid var(--line);border-radius:8px;padding:9px 12px;outline:none}
+input:focus,button:focus-visible{outline:2px solid var(--acc)}
+#rail{width:68px;background:var(--rail);display:flex;flex-direction:column;align-items:center;gap:10px;padding:12px 0;overflow-y:auto;flex:none}
+.sv{width:46px;height:46px;border-radius:50%;background:var(--panel);font-weight:700;transition:border-radius .15s}
+.sv:hover,.sv.on{border-radius:14px;background:var(--acc);color:#10171c}
+#side{width:230px;background:var(--panel);display:flex;flex-direction:column;flex:none}
+#side h2{font-size:16px;padding:14px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:8px}
+#chs{flex:1;overflow-y:auto;padding:8px}
+.grp{display:flex;justify-content:space-between;color:var(--dim);font-size:13px;padding:10px 6px 4px}
+.ch{display:block;width:100%;text-align:left;padding:6px 10px;border-radius:6px;color:var(--dim)}
+.ch:hover,.ch.on{background:var(--line);color:var(--text)}
+.ch.live{color:var(--ok)}
+#vbar{border-top:1px solid var(--line);padding:10px;display:none;background:var(--rail)}
+#vbar.show{display:block}
+#vbar small{color:var(--ok);display:block}
+#vbar .row{display:flex;gap:6px;margin-top:6px}
+.btn{background:var(--line);border-radius:6px;padding:5px 10px;font-size:13px}
+.btn:hover{background:#2f3e48}
+.btn.pri{background:var(--acc);color:#10171c;font-weight:700}
+#me{padding:10px 14px;border-top:1px solid var(--line);color:var(--dim);font-size:13px}
+#main{flex:1;display:flex;flex-direction:column;min-width:0}
+#top{padding:14px 18px;border-bottom:1px solid var(--line);font-weight:700;display:flex;justify-content:space-between;gap:8px}
+#msgs{flex:1;overflow-y:auto;padding:16px 18px;display:flex;flex-direction:column;gap:12px}
+.m b{margin-right:8px}.m time{color:var(--dim);font-size:12px}
+.m p{white-space:pre-wrap;word-break:break-word}
+.m img{max-width:min(360px,100%);border-radius:8px;margin-top:6px;display:block}
+.m a{color:var(--acc)}
+#form{display:flex;gap:8px;padding:12px 18px 18px}
+#form input[type=text]{flex:1;min-width:0}
+.empty{margin:auto;color:var(--dim);text-align:center;max-width:300px}
+#ov{position:fixed;inset:0;background:#10171ccc;display:none;place-items:center;z-index:9}
+#ov.show{display:grid}
+#ov form{background:var(--panel);padding:24px;border-radius:12px;display:flex;flex-direction:column;gap:12px;width:min(340px,90vw)}
+@media(max-width:700px){#rail{width:54px}#side{width:150px}.sv{width:40px;height:40px}}
+</style>
+</head>
+<body>
+<nav id="rail" aria-label="서버"></nav>
+<aside id="side">
+  <h2><span id="sname">서버를 선택하세요</span><button class="btn" id="inv" hidden>초대</button></h2>
+  <div id="chs"></div>
+  <div id="vbar"><small id="vstat">음성 연결됨</small><span id="vpeers"></span>
+    <div class="row"><button class="btn" id="mute">마이크 끄기</button><button class="btn" id="leave">나가기</button></div></div>
+  <div id="me"></div>
+</aside>
+<section id="main">
+  <div id="top"><span id="cname"></span></div>
+  <div id="msgs"><div class="empty">왼쪽에서 서버를 만들거나, 받은 초대 링크로 들어오세요.</div></div>
+  <form id="form" hidden>
+    <button type="button" class="btn" id="att" title="파일·사진 올리기">＋</button>
+    <input type="file" id="file" hidden>
+    <input type="text" id="txt" placeholder="메시지 보내기" autocomplete="off">
+    <button class="btn pri">전송</button>
+  </form>
+</section>
+<div id="audios"></div>
+<div id="ov"><form id="nf"><b>닉네임을 정해주세요</b><input id="nick" maxlength="20" required><button class="btn pri">시작하기</button></form></div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+import { getAnalytics } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-analytics.js";
+import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+import { getFirestore, collection, doc, addDoc, getDoc, getDocs, updateDoc, deleteDoc, setDoc, onSnapshot, query, where, orderBy, limit, serverTimestamp, arrayUnion } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js";
+
+const app = initializeApp({
+  apiKey: "AIzaSyBalfDGFEB0cW-qOkRuGNHi__5eMjlUAVc",
+  authDomain: "voice-chat-c04ce.firebaseapp.com",
+  projectId: "voice-chat-c04ce",
+  storageBucket: "voice-chat-c04ce.firebasestorage.app",
+  messagingSenderId: "560556790117",
+  appId: "1:560556790117:web:9bfcc877b915dc8c51518c",
+  measurementId: "G-GMGEN69PTR"
+});
+try { getAnalytics(app); } catch (e) {}
+const auth = getAuth(app), db = getFirestore(app), st = getStorage(app);
+const $ = id => document.getElementById(id);
+let me = { uid: null, name: localStorage.nick || "" }, sid = null, cid = null, sdata = null;
+let unS = null, unC = null, unM = null, chans = [];
+
+// ---------- 로그인 ----------
+onAuthStateChanged(auth, async u => {
+  if (!u) return signInAnonymously(auth).catch(e => alert("Authentication에서 '익명' 로그인을 켜주세요.\n" + e.message));
+  me.uid = u.uid;
+  if (!me.name) { $("ov").classList.add("show"); await new Promise(r => $("nf").onsubmit = e => { e.preventDefault(); me.name = localStorage.nick = $("nick").value.trim(); $("ov").classList.remove("show"); r(); }); }
+  $("me").textContent = "내 이름: " + me.name;
+  start();
+});
+
+function start() {
+  onSnapshot(query(collection(db, "servers"), where("members", "array-contains", me.uid)), snap => {
+    const rail = $("rail"); rail.innerHTML = "";
+    snap.docs.forEach(d => {
+      const b = document.createElement("button");
+      b.className = "sv" + (d.id === sid ? " on" : ""); b.title = d.data().name; b.textContent = d.data().name.slice(0, 2);
+      b.onclick = () => openServer(d.id); rail.append(b);
+    });
+    const add = document.createElement("button"); add.className = "sv"; add.textContent = "＋"; add.title = "서버 만들기"; add.onclick = newServer; rail.append(add);
+  });
+  const code = new URLSearchParams(location.search).get("invite");
+  if (code) joinByInvite(code);
+}
+
+async function newServer() {
+  const name = prompt("서버 이름"); if (!name) return;
+  const s = await addDoc(collection(db, "servers"), { name, owner: me.uid, members: [me.uid], createdAt: serverTimestamp() });
+  await addDoc(collection(db, `servers/${s.id}/channels`), { name: "일반", type: "text", createdAt: serverTimestamp() });
+  await addDoc(collection(db, `servers/${s.id}/channels`), { name: "음성", type: "voice", createdAt: serverTimestamp() });
+  openServer(s.id);
+}
+
+async function joinByInvite(code) {
+  try {
+    const d = await getDoc(doc(db, "servers", code));
+    if (!d.exists()) return alert("유효하지 않은 초대 링크입니다.");
+    await updateDoc(d.ref, { members: arrayUnion(me.uid) });
+    history.replaceState(null, "", location.pathname);
+    openServer(code);
+  } catch (e) { alert("초대 수락 실패: " + e.message); }
+}
+
+// ---------- 서버/채널 ----------
+function openServer(id) {
+  if (sid === id) return;
+  sid = id; cid = null; unS && unS(); unC && unC(); unM && unM();
+  $("msgs").innerHTML = ""; $("form").hidden = true; $("cname").textContent = "";
+  document.querySelectorAll(".sv").forEach(b => b.classList.toggle("on", b.title === (sdata && sdata.name)));
+  unS = onSnapshot(doc(db, "servers", id), d => { sdata = d.data(); $("sname").textContent = sdata.name; $("inv").hidden = false; });
+  unC = onSnapshot(query(collection(db, `servers/${id}/channels`), orderBy("createdAt")), snap => {
+    chans = snap.docs.map(d => ({ id: d.id, ...d.data() })); drawChannels();
+    if (!cid) { const t = chans.find(c => c.type === "text"); t && openText(t); }
+  });
+}
+function drawChannels() {
+  const box = $("chs"); box.innerHTML = "";
+  [["text", "텍스트 채널"], ["voice", "음성 채널"]].forEach(([type, label]) => {
+    const g = document.createElement("div"); g.className = "grp"; g.innerHTML = `<span>${label}</span>`;
+    const plus = document.createElement("button"); plus.textContent = "＋"; plus.title = "채널 만들기"; plus.onclick = () => newChannel(type); g.append(plus); box.append(g);
+    chans.filter(c => c.type === type).forEach(c => {
+      const b = document.createElement("button");
+      b.className = "ch" + (c.id === cid ? " on" : "") + (voice && voice.cid === c.id ? " live" : "");
+      b.textContent = (type === "text" ? "# " : "🔊 ") + c.name;
+      b.onclick = () => type === "text" ? openText(c) : joinVoice(c);
+      box.append(b);
+    });
+  });
+}
+async function newChannel(type) {
+  const name = prompt(type === "text" ? "텍스트 채널 이름" : "음성 채널 이름"); if (!name) return;
+  await addDoc(collection(db, `servers/${sid}/channels`), { name, type, createdAt: serverTimestamp() });
+}
+$("inv").onclick = async () => {
+  const url = location.origin + location.pathname + "?invite=" + sid;
+  try { await navigator.clipboard.writeText(url); alert("초대 링크를 복사했어요!\n" + url); } catch { prompt("이 링크를 공유하세요", url); }
+};
+
+// ---------- 텍스트 채팅 ----------
+function openText(c) {
+  cid = c.id; unM && unM(); drawChannels();
+  $("cname").textContent = "# " + c.name; $("form").hidden = false; $("msgs").innerHTML = "";
+  unM = onSnapshot(query(collection(db, `servers/${sid}/channels/${c.id}/messages`), orderBy("createdAt"), limit(100)), snap => {
+    const box = $("msgs"), near = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+    box.innerHTML = "";
+    if (!snap.size) box.innerHTML = '<div class="empty">아직 메시지가 없어요. 첫 메시지를 보내보세요.</div>';
+    snap.docs.forEach(d => box.append(renderMsg(d.data())));
+    if (near || snap.docChanges().length === snap.size) box.scrollTop = box.scrollHeight;
+  });
+}
+function renderMsg(m) {
+  const el = document.createElement("div"); el.className = "m";
+  const t = m.createdAt && m.createdAt.toDate ? m.createdAt.toDate().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }) : "";
+  const h = document.createElement("div"); const b = document.createElement("b"); b.textContent = m.name; const tm = document.createElement("time"); tm.textContent = t; h.append(b, tm); el.append(h);
+  if (m.text) { const p = document.createElement("p"); p.textContent = m.text; el.append(p); }
+  if (m.fileUrl) {
+    if ((m.fileType || "").startsWith("image/")) { const a = document.createElement("a"); a.href = m.fileUrl; a.target = "_blank"; const i = document.createElement("img"); i.src = m.fileUrl; i.alt = m.fileName; a.append(i); el.append(a); }
+    else { const a = document.createElement("a"); a.href = m.fileUrl; a.target = "_blank"; a.textContent = "📎 " + m.fileName; el.append(a); }
+  }
+  return el;
+}
+const send = data => addDoc(collection(db, `servers/${sid}/channels/${cid}/messages`), { uid: me.uid, name: me.name, createdAt: serverTimestamp(), ...data });
+$("form").onsubmit = async e => {
+  e.preventDefault(); const text = $("txt").value.trim(); if (!text) return; $("txt").value = ""; send({ text });
+};
+$("att").onclick = () => $("file").click();
+$("file").onchange = async e => {
+  const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+  if (f.size > 10 * 1024 * 1024) return alert("10MB 이하 파일만 올릴 수 있어요.");
+  $("att").textContent = "…";
+  try {
+    const r = ref(st, `uploads/${sid}/${Date.now()}_${f.name.replace(/[^\w.\-가-힣]/g, "_")}`);
+    await uploadBytes(r, f, { contentType: f.type });
+    await send({ fileUrl: await getDownloadURL(r), fileName: f.name, fileType: f.type });
+  } catch (err) { alert("업로드 실패: " + err.message); }
+  $("att").textContent = "＋";
+};
+
+// ---------- 음성 채팅 (WebRTC + Firestore 시그널링) ----------
+let voice = null, chain = Promise.resolve();
+const ICE = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }] };
+
+async function joinVoice(c) {
+  if (voice && voice.cid === c.id) return;
+  if (voice) await leaveVoice();
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
+  catch { return alert("마이크 권한이 필요해요. (https 또는 localhost에서만 동작)"); }
+  const base = `servers/${sid}/channels/${c.id}`;
+  voice = { cid: c.id, base, name: c.name, stream, pcs: {}, queue: {}, un: [] };
+  const v = voice;
+  const existing = await getDocs(collection(db, base + "/peers"));
+  await setDoc(doc(db, base + "/peers/" + me.uid), { name: me.name, joinedAt: serverTimestamp() });
+  existing.docs.filter(d => d.id !== me.uid).forEach(d => call(d.id));
+  v.un.push(onSnapshot(collection(db, base + "/peers"), snap => {
+    $("vpeers").textContent = snap.docs.map(d => d.data().name).join(", ");
+    snap.docChanges().forEach(ch => { if (ch.type === "removed" && v.pcs[ch.doc.id]) closePeer(ch.doc.id); });
+  }));
+  v.un.push(onSnapshot(query(collection(db, base + "/signals"), where("to", "==", me.uid)), snap =>
+    snap.docChanges().filter(ch => ch.type === "added").forEach(ch => { chain = chain.then(() => onSignal(ch.doc)).catch(console.error); })));
+  $("vbar").classList.add("show"); $("vstat").textContent = "🔊 " + c.name + " 연결됨"; $("mute").textContent = "마이크 끄기";
+  drawChannels();
+}
+function mkpc(uid) {
+  const pc = new RTCPeerConnection(ICE), v = voice;
+  v.stream.getTracks().forEach(t => pc.addTrack(t, v.stream));
+  pc.onicecandidate = e => e.candidate && sig(uid, "ice", e.candidate.toJSON());
+  pc.ontrack = e => {
+    let a = $("a_" + uid);
+    if (!a) { a = document.createElement("audio"); a.id = "a_" + uid; a.autoplay = true; $("audios").append(a); }
+    a.srcObject = e.streams[0];
+  };
+  v.pcs[uid] = pc; return pc;
+}
+const sig = (to, kind, payload) => voice && addDoc(collection(db, voice.base + "/signals"), { from: me.uid, to, kind, payload: JSON.stringify(payload) });
+async function call(uid) {
+  const pc = mkpc(uid), o = await pc.createOffer();
+  await pc.setLocalDescription(o); sig(uid, "offer", { type: o.type, sdp: o.sdp });
+}
+async function flush(uid) {
+  const pc = voice.pcs[uid], q = voice.queue[uid] || []; voice.queue[uid] = [];
+  for (const c of q) await pc.addIceCandidate(c).catch(() => {});
+}
+async function onSignal(d) {
+  if (!voice) return;
+  const { from, kind, payload } = d.data(), p = JSON.parse(payload);
+  deleteDoc(d.ref).catch(() => {});
+  if (kind === "offer") {
+    voice.pcs[from] && voice.pcs[from].close();
+    const pc = mkpc(from); await pc.setRemoteDescription(p); await flush(from);
+    const a = await pc.createAnswer(); await pc.setLocalDescription(a); sig(from, "answer", { type: a.type, sdp: a.sdp });
+  } else if (kind === "answer" && voice.pcs[from]) {
+    await voice.pcs[from].setRemoteDescription(p); await flush(from);
+  } else if (kind === "ice") {
+    const pc = voice.pcs[from];
+    if (pc && pc.remoteDescription) await pc.addIceCandidate(p).catch(() => {});
+    else (voice.queue[from] = voice.queue[from] || []).push(p);
+  }
+}
+function closePeer(uid) {
+  voice.pcs[uid] && voice.pcs[uid].close(); delete voice.pcs[uid];
+  const a = $("a_" + uid); a && a.remove();
+}
+async function leaveVoice() {
+  if (!voice) return; const v = voice; voice = null;
+  v.un.forEach(u => u()); Object.keys(v.pcs).forEach(u => { v.pcs[u].close(); const a = $("a_" + u); a && a.remove(); });
+  v.stream.getTracks().forEach(t => t.stop());
+  await deleteDoc(doc(db, v.base + "/peers/" + me.uid)).catch(() => {});
+  $("vbar").classList.remove("show"); $("vpeers").textContent = ""; drawChannels();
+}
+$("leave").onclick = leaveVoice;
+$("mute").onclick = () => {
+  if (!voice) return; const t = voice.stream.getAudioTracks()[0]; t.enabled = !t.enabled;
+  $("mute").textContent = t.enabled ? "마이크 끄기" : "마이크 켜기";
+};
+addEventListener("beforeunload", () => { if (voice) deleteDoc(doc(db, voice.base + "/peers/" + me.uid)); });
+</script>
+</body>
+</html>
