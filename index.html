@@ -45,13 +45,19 @@ input:focus-visible,button:focus-visible{outline:2px solid var(--acc)}
 #ov{position:fixed;inset:0;background:#14181cdd;display:none;place-items:center;z-index:9}
 #ov.show{display:grid}
 #ov form{background:var(--side);padding:24px;border-radius:14px;display:flex;flex-direction:column;gap:12px;width:min(320px,90vw)}
+#ex{position:fixed;inset:0;background:#14181cdd;display:none;place-items:center;z-index:9}
+#ex.show{display:grid}
+#exb{background:var(--side);padding:20px;border-radius:14px;width:min(380px,92vw);max-height:80vh;display:flex;flex-direction:column;gap:10px}
+#exl{overflow-y:auto;display:flex;flex-direction:column;gap:6px}
+.xr{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 10px;border-radius:10px;background:var(--hover)}
+.xr small{color:var(--dim);display:block}
 @media(max-width:700px){#rail{width:50px}#side{width:140px}.sv{width:36px;height:36px}}
 </style>
 </head>
 <body>
 <nav id="rail" aria-label="서버"></nav>
 <aside id="side">
-  <h2><span id="sname">서버를 선택하세요</span><button class="btn" id="inv" hidden>초대</button></h2>
+  <h2><span id="sname">서버를 선택하세요</span><span><button class="btn" id="pub" hidden></button> <button class="btn" id="inv" hidden>초대</button></span></h2>
   <div id="chs"></div>
   <div id="vbar"><small id="vstat">음성 연결됨</small><span id="vpeers"></span>
     <div class="row"><button class="btn" id="mute">마이크 끄기</button><button class="btn" id="leave">나가기</button></div></div>
@@ -68,6 +74,7 @@ input:focus-visible,button:focus-visible{outline:2px solid var(--acc)}
   </form>
 </section>
 <div id="audios"></div>
+<div id="ex"><div id="exb"><b>공개 서버 둘러보기</b><div id="exl"></div><button class="btn" id="exc">닫기</button></div></div>
 <div id="ov"><form id="nf"><b>닉네임을 정해주세요</b><input id="nick" maxlength="20" required><button class="btn pri">시작하기</button></form></div>
 
 <script type="module">
@@ -109,6 +116,7 @@ function start() {
       b.className = "sv" + (d.id === sid ? " on" : ""); b.title = d.data().name; b.textContent = d.data().name.slice(0, 2);
       b.onclick = () => openServer(d.id); rail.append(b);
     });
+    const ex = document.createElement("button"); ex.className = "sv"; ex.textContent = "🧭"; ex.title = "공개 서버 둘러보기"; ex.onclick = explore; rail.append(ex);
     const add = document.createElement("button"); add.className = "sv"; add.textContent = "＋"; add.title = "서버 만들기"; add.onclick = newServer; rail.append(add);
   });
   const code = new URLSearchParams(location.search).get("invite");
@@ -117,7 +125,8 @@ function start() {
 
 async function newServer() {
   const name = prompt("서버 이름"); if (!name) return;
-  const s = await addDoc(collection(db, "servers"), { name, owner: me.uid, members: [me.uid], createdAt: serverTimestamp() });
+  const isPublic = confirm("공개 서버로 만들까요?\n확인 = 공개 (누구나 찾아서 입장)\n취소 = 비공개 (초대 링크로만 입장)");
+  const s = await addDoc(collection(db, "servers"), { name, owner: me.uid, members: [me.uid], public: isPublic, createdAt: serverTimestamp() });
   await addDoc(collection(db, `servers/${s.id}/channels`), { name: "일반", type: "text", createdAt: serverTimestamp() });
   await addDoc(collection(db, `servers/${s.id}/channels`), { name: "음성", type: "voice", createdAt: serverTimestamp() });
   openServer(s.id);
@@ -133,13 +142,40 @@ async function joinByInvite(code) {
   } catch (e) { alert("초대 수락 실패: " + e.message); }
 }
 
+// ---------- 공개/비공개 ----------
+function drawPub() {
+  const b = $("pub"); b.hidden = !sdata || sdata.owner !== me.uid;
+  b.textContent = sdata && sdata.public ? "🌐 공개" : "🔒 비공개";
+  b.title = "눌러서 공개/비공개 전환";
+}
+$("pub").onclick = async () => {
+  const to = !sdata.public;
+  if (!confirm(to ? "공개로 전환하면 누구나 '둘러보기'에서 이 서버를 찾아 입장할 수 있어요." : "비공개로 전환하면 초대 링크를 받은 사람만 입장할 수 있어요.")) return;
+  try { await updateDoc(doc(db, "servers", sid), { public: to }); } catch (e) { alert("변경 실패: " + e.message); }
+};
+async function explore() {
+  const box = $("exl"); box.innerHTML = '<div class="empty">불러오는 중…</div>'; $("ex").classList.add("show");
+  try {
+    const snap = await getDocs(query(collection(db, "servers"), where("public", "==", true), limit(30)));
+    box.innerHTML = snap.size ? "" : '<div class="empty">공개된 서버가 아직 없어요.</div>';
+    snap.docs.forEach(d => {
+      const x = d.data(), joined = x.members.includes(me.uid), r = document.createElement("div"); r.className = "xr";
+      const t = document.createElement("div"); t.textContent = x.name; const s = document.createElement("small"); s.textContent = "멤버 " + x.members.length + "명"; t.append(s);
+      const b = document.createElement("button"); b.className = "btn pri"; b.textContent = joined ? "열기" : "입장";
+      b.onclick = async () => { try { if (!joined) await updateDoc(d.ref, { members: arrayUnion(me.uid) }); $("ex").classList.remove("show"); openServer(d.id); } catch (e) { alert("입장 실패: " + e.message); } };
+      r.append(t, b); box.append(r);
+    });
+  } catch (e) { box.innerHTML = '<div class="empty">불러오지 못했어요: ' + e.message + "</div>"; }
+}
+$("exc").onclick = () => $("ex").classList.remove("show");
+
 // ---------- 서버/채널 ----------
 function openServer(id) {
   if (sid === id) return;
   sid = id; cid = null; unS && unS(); unC && unC(); unM && unM();
   $("msgs").innerHTML = ""; $("form").hidden = true; $("cname").textContent = "";
   document.querySelectorAll(".sv").forEach(b => b.classList.toggle("on", b.title === (sdata && sdata.name)));
-  unS = onSnapshot(doc(db, "servers", id), d => { sdata = d.data(); $("sname").textContent = sdata.name; $("inv").hidden = false; });
+  unS = onSnapshot(doc(db, "servers", id), d => { sdata = d.data(); $("sname").textContent = sdata.name; $("inv").hidden = false; drawPub(); });
   unC = onSnapshot(query(collection(db, `servers/${id}/channels`), orderBy("createdAt")), snap => {
     chans = snap.docs.map(d => ({ id: d.id, ...d.data() })); drawChannels();
     if (!cid) { const t = chans.find(c => c.type === "text"); t && openText(t); }
